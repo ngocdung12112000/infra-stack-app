@@ -12,14 +12,14 @@ jobs:
   compose:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Validate local compose
         run: docker compose -f local/compose.yml config -q
 
   prometheus:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Check Prometheus config
         run: |
           docker run --rm --entrypoint promtool \
@@ -30,6 +30,6 @@ jobs:
     # k8s/ is empty in Phase 0; kubeconform + kustomize checks are added with the first manifests.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Placeholder check
         run: test -d k8s
