@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: stackshop
+    folder: StackShop
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      # monitoring/dashboards is mounted here by local/compose.yml
+      path: /var/lib/grafana/dashboards

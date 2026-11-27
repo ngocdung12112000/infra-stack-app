@@ -26,13 +26,19 @@ services:
 
   mongo:
     image: mongo:7
+    # Single-node replica set (required for multi-document transactions). No auth in local dev.
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     ports: ["27017:27017"]
     volumes:
       - mongo-data:/data/db
+      - ./init/mongo:/init/mongo:ro
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      # Idempotently rs.initiate()s on first run, then succeeds once PRIMARY.
+      test: ["CMD", "mongosh", "--quiet", "/init/mongo/rs-init.js"]
       interval: 10s
+      timeout: 10s
       retries: 10
+      start_period: 5s
 
   redis:
     image: redis:7-alpine
@@ -51,8 +57,14 @@ services:
   prometheus:
     image: prom/prometheus:latest
     ports: ["9090:9090"]
+    # --web.enable-lifecycle lets `curl -X POST localhost:9090/-/reload` pick up config/rule changes
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
     volumes:
       - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/prometheus/rules:/etc/prometheus/rules:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -63,3 +75,5 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/dashboards:/var/lib/grafana/dashboards:ro

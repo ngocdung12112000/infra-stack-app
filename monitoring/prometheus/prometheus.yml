@@ -1,11 +1,16 @@
 global:
   scrape_interval: 15s
 
+# Plain rule files rendered from monitoring/rules/*.rules.yaml (python monitoring/scripts/render-local-rules.py).
+rule_files:
+  - /etc/prometheus/rules/*.rules.yml
+
 scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
   # Backend services (stackshop-backend/docker-compose.yml, same "stackshop" network).
+  # Targets are DOWN until the matching backend container is running.
   - job_name: gateway
     metrics_path: /metrics
     static_configs:
@@ -14,3 +19,7 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["catalog:8080"]
+  - job_name: identity
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["identity:8080"]
