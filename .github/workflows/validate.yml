@@ -20,16 +20,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Check Prometheus config
+      - name: Rendered local rules are up to date
         run: |
-          docker run --rm --entrypoint promtool \
-            -v "$PWD/monitoring/prometheus:/cfg:ro" \
-            prom/prometheus:latest check config /cfg/prometheus.yml
+          pip install --quiet pyyaml
+          python monitoring/scripts/render-local-rules.py --check
+      - name: promtool check config / rules / unit tests
+        run: |
+          docker run --rm --entrypoint promtool -v "$PWD/monitoring:/m:ro" prom/prometheus:latest check config /m/prometheus/prometheus.yml
+          docker run --rm --entrypoint promtool -v "$PWD/monitoring:/m:ro" prom/prometheus:latest check rules /m/prometheus/rules/*.rules.yml
+          docker run --rm --entrypoint promtool -v "$PWD/monitoring:/m:ro" prom/prometheus:latest test rules /m/rules/tests/*.yaml
+      - name: Dashboards are valid JSON with stable uids
+        run: |
+          for f in monitoring/dashboards/*.json; do
+            jq -e '.uid and .title and (.panels | length > 0) and ([.panels[] | select(.type != "row") | .description] | all(. != null and . != ""))' "$f" > /dev/null
+          done
 
   k8s:
-    # k8s/ is empty in Phase 0; kubeconform + kustomize checks are added with the first manifests.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Placeholder check
-        run: test -d k8s
+      - name: Install kubeconform and kube-linter
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | sudo tar xz -C /usr/local/bin kubeconform
+          curl -sSL https://github.com/stackrox/kube-linter/releases/download/v0.7.2/kube-linter-linux.tar.gz | sudo tar xz -C /usr/local/bin kube-linter
+      - name: kustomize build + kubeconform + kube-linter
+        run: |
+          shopt -s nullglob
+          for dir in k8s/apps/*/overlays/*/ monitoring/; do
+            [ -f "${dir}kustomization.yaml" ] || continue
+            echo "== $dir"
+            kubectl kustomize "$dir" > /tmp/out.yaml
+            kubeconform -strict -summary -ignore-missing-schemas < /tmp/out.yaml
+            case "$dir" in k8s/apps/*) kube-linter lint /tmp/out.yaml ;; esac
+          done

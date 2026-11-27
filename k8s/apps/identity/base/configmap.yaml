@@ -1,0 +1,29 @@
+# Non-secret configuration. Environment-specific values are patched in the overlays.
+# Secrets (connection strings, SMTP credentials, signing key) come from the Secret "identity-secrets"
+# (SealedSecret in dev/staging, ExternalSecret in prod). Nothing secret belongs here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: identity-config
+data:
+  ASPNETCORE_ENVIRONMENT: Production
+  Serilog__MinimumLevel__Default: Information
+  Jwt__Issuer: stackshop-identity
+  Jwt__Audience: stackshop-api
+  # The signing key is mounted from the Secret at this path. Generating a key is a local-dev feature only.
+  Signing__PrivateKeyPath: /keys/private.pem
+  Signing__GenerateIfMissing: "false"
+  # Schema changes are applied by the migration Job (ArgoCD PreSync), never by the pods.
+  Database__MigrateOnStartup: "false"
+  Email__Host: mailpit.data.svc.cluster.local
+  Email__Port: "1025"
+  Email__UseStartTls: "false"
+  Email__FromAddress: no-reply@stackshop.local
+  Auth__FrontendBaseUrl: https://shop.stackshop.local
+  Auth__AccessTokenMinutes: "15"
+  Auth__MaxFailedLogins: "5"
+  Auth__LockoutMinutes: "15"
+  Auth__IpAttemptLimit: "20"
+  Auth__IpWindowMinutes: "15"
+  Auth__ConfirmTokenHours: "24"
+  Auth__ResetTokenMinutes: "30"

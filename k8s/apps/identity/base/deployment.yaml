@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity
+  labels:
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: identity
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: identity
+        app.kubernetes.io/component: api
+    spec:
+      serviceAccountName: identity
+      automountServiceAccountToken: false
+      # Host shutdown timeout is 25s (Program.cs) + 5s preStop; keep the grace period above both.
+      terminationGracePeriodSeconds: 45
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: identity
+                    app.kubernetes.io/component: api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1654 # APP_UID of the dotnet/aspnet:8 image
+        runAsGroup: 1654
+        fsGroup: 1654
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: identity
+          image: ghcr.io/ngocdung12112000/stackshop-identity # tag is set by the overlay (CI bumps it)
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: identity-config
+          env:
+            - name: ConnectionStrings__Identity
+              valueFrom: { secretKeyRef: { name: identity-secrets, key: ConnectionStrings__Identity } }
+            - name: Redis__ConnectionString
+              valueFrom: { secretKeyRef: { name: identity-secrets, key: Redis__ConnectionString } }
+            - name: Email__Username
+              valueFrom: { secretKeyRef: { name: identity-secrets, key: Email__Username, optional: true } }
+            - name: Email__Password
+              valueFrom: { secretKeyRef: { name: identity-secrets, key: Email__Password, optional: true } }
+            # Key rotation (optional): explicit key id and the previous public key(s) kept in the JWKS.
+            - name: Signing__KeyId
+              valueFrom: { secretKeyRef: { name: identity-secrets, key: Signing__KeyId, optional: true } }
+            - name: Signing__RetiredPublicKeyPems__0
+              valueFrom: { secretKeyRef: { name: identity-secrets, key: Signing__RetiredPublicKeyPems__0, optional: true } }
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 5
+          startupProbe:
+            httpGet: { path: /health/live, port: http }
+            failureThreshold: 30
+            periodSeconds: 2
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"] # let endpoint removal propagate before SIGTERM
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { memory: 384Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: signing-key, mountPath: /keys, readOnly: true }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: signing-key
+          secret:
+            secretName: identity-secrets
+            defaultMode: 0440
+            items:
+              - key: signing-private-key.pem
+                path: private.pem

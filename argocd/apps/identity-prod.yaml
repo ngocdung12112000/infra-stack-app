@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: identity-prod
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: stackshop
+    stackshop/env: prod
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ngocdung12112000/stackshop-infra.git
+    targetRevision: main
+    path: k8s/apps/identity/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: stackshop
+  syncPolicy:
+    # manual sync for prod: a human clicks Sync after the promotion PR is merged
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers: [/spec/replicas] # owned by the HPA

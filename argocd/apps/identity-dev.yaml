@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: identity-dev
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: stackshop
+    stackshop/env: dev
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ngocdung12112000/stackshop-infra.git
+    targetRevision: main
+    path: k8s/apps/identity/overlays/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: stackshop
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true

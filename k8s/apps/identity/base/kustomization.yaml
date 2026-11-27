@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: stackshop
+    includeSelectors: false
+resources:
+  - serviceaccount.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
+  - pdb.yaml
+  - servicemonitor.yaml
+  - networkpolicy.yaml
+  - migration-job.yaml
+images:
+  - name: ghcr.io/ngocdung12112000/stackshop-identity
+    newTag: latest # placeholder; each overlay pins the real tag
