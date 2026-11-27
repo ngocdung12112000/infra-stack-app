@@ -1,0 +1,117 @@
+rule_files:
+  - ../../prometheus/rules/identity.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: refresh reuse fires on a burst
+    interval: 1m
+    input_series:
+      - series: 'stackshop_auth_refresh_total{outcome="reused",job="identity"}'
+        values: "0 0 5 10 15 20 25 30 35 40 45 50 50 50"
+      - series: 'stackshop_auth_refresh_total{outcome="success",job="identity"}'
+        values: "0+10x13"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: RefreshTokenReuseDetected
+        exp_alerts: [] # pending only (for: 2m)
+      - eval_time: 8m
+        alertname: RefreshTokenReuseDetected
+        exp_alerts:
+          - exp_labels: { severity: critical, team: stackshop, service: identity }
+            exp_annotations:
+              summary: "Refresh token reuse spike (35 in 10m)"
+              description: "A rotated refresh token was presented again more than 3 times in 10m. This is the signature of a stolen token; identity revokes the affected token family."
+              runbook_url: "https://github.com/ngocdung12112000/stackshop-infra/blob/main/monitoring/runbooks/identity-refresh-reuse.md"
+              dashboard: "stackshop-identity-auth"
+  - name: normal refresh traffic does not alert
+    interval: 1m
+    input_series:
+      - series: 'stackshop_auth_refresh_total{outcome="success",job="identity"}'
+        values: "0+20x20"
+      - series: 'stackshop_auth_refresh_total{outcome="reused",job="identity"}'
+        values: "0x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: RefreshTokenReuseDetected
+        exp_alerts: []
+  - name: lockout spike alerts and throttle stays quiet
+    interval: 1m
+    input_series:
+      - series: 'stackshop_auth_logins_total{outcome="locked_out",job="identity"}'
+        values: "0+10x20"
+      - series: 'stackshop_auth_logins_total{outcome="throttled",job="identity"}'
+        values: "0+2x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: LoginLockoutSpike
+        exp_alerts:
+          - exp_labels: { severity: warning, team: stackshop, service: identity }
+            exp_annotations:
+              summary: "Login lockouts spiking (100 in 10m)"
+              description: "Many login attempts hit locked-out accounts. Possible credential stuffing or a broken client retrying with a bad password."
+              runbook_url: "https://github.com/ngocdung12112000/stackshop-infra/blob/main/monitoring/runbooks/identity-login-abuse.md"
+              dashboard: "stackshop-identity-auth"
+      - eval_time: 15m
+        alertname: LoginThrottleSpike
+        exp_alerts: []
+  - name: 5xx burst fires IdentityHighErrorRate
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="identity",http_route="/api/v1/auth/login",http_response_status_code="200"}'
+        values: "0+10x20"
+      - series: 'http_server_request_duration_seconds_count{job="identity",http_route="/api/v1/auth/login",http_response_status_code="500"}'
+        values: "0+1x20"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: IdentityHighErrorRate
+        exp_alerts: [] # pending only (for: 5m)
+      - eval_time: 12m
+        alertname: IdentityHighErrorRate
+        exp_alerts:
+          - exp_labels: { severity: critical, team: stackshop, service: identity }
+            exp_annotations:
+              summary: "Identity 5xx ratio is 9.091%"
+              description: "More than 5% of identity requests failed with 5xx for 5m (with at least 0.05 req/s of traffic). Check MySQL and Redis connectivity and the identity logs."
+              runbook_url: "https://github.com/ngocdung12112000/stackshop-infra/blob/main/monitoring/runbooks/identity-service-health.md"
+              dashboard: "stackshop-identity-auth"
+  - name: healthy traffic and tiny traffic do not alert on errors
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{job="identity",http_route="/api/v1/auth/login",http_response_status_code="200"}'
+        values: "0+10x20"
+      - series: 'http_server_request_duration_seconds_count{job="identity",http_route="/api/v1/auth/login",http_response_status_code="500"}'
+        values: "0+0x20"
+      # one failed request out of two, far below the traffic guard (0.05 req/s)
+      - series: 'http_server_request_duration_seconds_count{job="identity-canary",http_route="/api/v1/auth/login",http_response_status_code="200"}'
+        values: "0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1"
+      - series: 'http_server_request_duration_seconds_count{job="identity-canary",http_route="/api/v1/auth/login",http_response_status_code="500"}'
+        values: "0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: IdentityHighErrorRate
+        exp_alerts: []
+  - name: slow responses fire IdentityHighLatencyP95
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_bucket{job="identity",http_route="/api/v1/auth/login",le="0.5"}'
+        values: "0x30"
+      - series: 'http_server_request_duration_seconds_bucket{job="identity",http_route="/api/v1/auth/login",le="1"}'
+        values: "0x30"
+      - series: 'http_server_request_duration_seconds_bucket{job="identity",http_route="/api/v1/auth/login",le="2.5"}'
+        values: "0+10x30"
+      - series: 'http_server_request_duration_seconds_bucket{job="identity",http_route="/api/v1/auth/login",le="+Inf"}'
+        values: "0+10x30"
+      - series: 'http_server_request_duration_seconds_count{job="identity",http_route="/api/v1/auth/login",http_response_status_code="200"}'
+        values: "0+10x30"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: IdentityHighLatencyP95
+        exp_alerts: [] # pending only (for: 10m)
+      - eval_time: 20m
+        alertname: IdentityHighLatencyP95
+        exp_alerts:
+          - exp_labels: { severity: warning, team: stackshop, service: identity }
+            exp_annotations:
+              summary: "Identity p95 latency is 2.425s"
+              description: "The 95th percentile of identity request duration stayed above 1s for 10m. Typical causes: slow MySQL, Redis latency, CPU starvation or a thread pool backlog."
+              runbook_url: "https://github.com/ngocdung12112000/stackshop-infra/blob/main/monitoring/runbooks/identity-service-health.md"
+              dashboard: "stackshop-identity-auth"

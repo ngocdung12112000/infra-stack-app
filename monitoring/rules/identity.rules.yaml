@@ -1,0 +1,76 @@
+# Source of truth for identity alerts. Applied as a PrometheusRule in K8s; local Prometheus reads the
+# rendered copy in monitoring/prometheus/rules/ (python monitoring/scripts/render-local-rules.py).
+# Metrics come from Identity.Application (stackshop_auth_logins_total / stackshop_auth_refresh_total).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: identity-auth
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: identity-auth
+      rules:
+        - alert: RefreshTokenReuseDetected
+          expr: sum(increase(stackshop_auth_refresh_total{outcome="reused"}[10m])) > 3
+          for: 2m
+          labels: { severity: critical, team: stackshop, service: identity }
+          annotations:
+            summary: "Refresh token reuse spike ({{ $value | printf \"%.0f\" }} in 10m)"
+            description: "A rotated refresh token was presented again more than 3 times in 10m. This is the signature of a stolen token; identity revokes the affected token family."
+            runbook_url: "https://github.com/ngocdung12112000/stackshop-infra/blob/main/monitoring/runbooks/identity-refresh-reuse.md"
+            dashboard: "stackshop-identity-auth"
+        - alert: LoginLockoutSpike
+          expr: sum(increase(stackshop_auth_logins_total{outcome="locked_out"}[10m])) > 20
+          for: 5m
+          labels: { severity: warning, team: stackshop, service: identity }
+          annotations:
+            summary: "Login lockouts spiking ({{ $value | printf \"%.0f\" }} in 10m)"
+            description: "Many login attempts hit locked-out accounts. Possible credential stuffing or a broken client retrying with a bad password."
+            runbook_url: "https://github.com/ngocdung12112000/stackshop-infra/blob/main/monitoring/runbooks/identity-login-abuse.md"
+            dashboard: "stackshop-identity-auth"
+        - alert: LoginThrottleSpike
+          expr: sum(increase(stackshop_auth_logins_total{outcome="throttled"}[10m])) > 50
+          for: 5m
+          labels: { severity: warning, team: stackshop, service: identity }
+          annotations:
+            summary: "Login throttling spiking ({{ $value | printf \"%.0f\" }} in 10m)"
+            description: "The per-IP / per-email login throttle is rejecting many attempts. Possible brute force from few sources, or the gateway is not forwarding the real client IP."
+            runbook_url: "https://github.com/ngocdung12112000/stackshop-infra/blob/main/monitoring/runbooks/identity-login-abuse.md"
+            dashboard: "stackshop-identity-auth"
+        - alert: IdentityDown
+          expr: sum(up{job=~"identity.*"}) == 0
+          for: 2m
+          labels: { severity: critical, team: stackshop, service: identity }
+          annotations:
+            summary: "No identity instance is being scraped successfully"
+            description: "All identity targets have been down for 2m. Logins, refresh and JWKS are unavailable (the gateway keeps validating tokens with its cached JWKS for a while)."
+            runbook_url: "https://github.com/ngocdung12112000/stackshop-infra/blob/main/monitoring/runbooks/identity-login-abuse.md"
+            dashboard: "stackshop-identity-auth"
+        - alert: IdentityHighErrorRate
+          expr: |
+            (
+              sum(rate(http_server_request_duration_seconds_count{job=~"identity.*",http_route!~"/metrics|/health/.*",http_response_status_code=~"5.."}[5m])) or vector(0)
+            )
+            / clamp_min(sum(rate(http_server_request_duration_seconds_count{job=~"identity.*",http_route!~"/metrics|/health/.*"}[5m])), 0.0001)
+            > 0.05
+            and sum(rate(http_server_request_duration_seconds_count{job=~"identity.*",http_route!~"/metrics|/health/.*"}[5m])) > 0.05
+          for: 5m
+          labels: { severity: critical, team: stackshop, service: identity }
+          annotations:
+            summary: "Identity 5xx ratio is {{ $value | humanizePercentage }}"
+            description: "More than 5% of identity requests failed with 5xx for 5m (with at least 0.05 req/s of traffic). Check MySQL and Redis connectivity and the identity logs."
+            runbook_url: "https://github.com/ngocdung12112000/stackshop-infra/blob/main/monitoring/runbooks/identity-service-health.md"
+            dashboard: "stackshop-identity-auth"
+        - alert: IdentityHighLatencyP95
+          expr: |
+            histogram_quantile(0.95, sum by (le)(rate(http_server_request_duration_seconds_bucket{job=~"identity.*",http_route!~"/metrics|/health/.*"}[5m]))) > 1
+            and sum(rate(http_server_request_duration_seconds_count{job=~"identity.*",http_route!~"/metrics|/health/.*"}[5m])) > 0.05
+          for: 10m
+          labels: { severity: warning, team: stackshop, service: identity }
+          annotations:
+            summary: "Identity p95 latency is {{ $value | humanizeDuration }}"
+            description: "The 95th percentile of identity request duration stayed above 1s for 10m. Typical causes: slow MySQL, Redis latency, CPU starvation or a thread pool backlog."
+            runbook_url: "https://github.com/ngocdung12112000/stackshop-infra/blob/main/monitoring/runbooks/identity-service-health.md"
+            dashboard: "stackshop-identity-auth"
