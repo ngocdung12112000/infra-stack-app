@@ -26,9 +26,12 @@ jobs:
           python monitoring/scripts/render-local-rules.py --check
       - name: promtool check config / rules / unit tests
         run: |
-          docker run --rm --entrypoint promtool -v "$PWD/monitoring:/m:ro" prom/prometheus:latest check config /m/prometheus/prometheus.yml
-          docker run --rm --entrypoint promtool -v "$PWD/monitoring:/m:ro" prom/prometheus:latest check rules /m/prometheus/rules/*.rules.yml
-          docker run --rm --entrypoint promtool -v "$PWD/monitoring:/m:ro" prom/prometheus:latest test rules /m/rules/tests/*.yaml
+          # Expand globs on the host (relative to monitoring/), then run promtool in /m
+          cd monitoring
+          promtool() { docker run --rm --entrypoint promtool -v "$PWD:/m:ro" -w /m prom/prometheus:latest "$@"; }
+          promtool check config prometheus/prometheus.yml
+          promtool check rules prometheus/rules/*.rules.yml
+          promtool test rules rules/tests/*.yaml
       - name: Dashboards are valid JSON with stable uids
         run: |
           for f in monitoring/dashboards/*.json; do
